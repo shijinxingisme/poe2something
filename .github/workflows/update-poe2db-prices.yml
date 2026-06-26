@@ -1,0 +1,25 @@
+name: Update poe2db price snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Update poe2db snapshot
+        run: python scripts/update_poe2db_prices.py
+      - name: Commit snapshot changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Update poe2db price snapshot
+          file_pattern: poe2db-prices.js
