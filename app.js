@@ -20,16 +20,28 @@
     "崇高石>混沌石=20",
     "混沌石>瓦尔宝珠=0.58",
     "瓦尔宝珠>点金石=2.55",
-    "点金石>混沌石=1.33",
-    "混沌石>神圣石=0.0087",
-    "神圣石>崇高石=5.45",
-    "崇高石>混沌石=20"
+    "点金石>混沌石=1.33"
   ].join("\n");
+
+  const slugToId = {
+    chaos: "chaos",
+    exalted: "exalted",
+    divine: "divine",
+    regal: "regal",
+    vaal: "vaal",
+    alch: "alchemy",
+    chance: "chance",
+    annul: "annul",
+    gcp: "gcp"
+  };
 
   const state = {
     prices: structuredClone(samplePrices),
     quotes: [],
-    source: "示例行情"
+    source: "示例行情",
+    watchTimer: null,
+    watchActive: false,
+    lastAlertKey: ""
   };
 
   const $ = (id) => document.getElementById(id);
@@ -40,6 +52,11 @@
   const round = (value, digits = 2) => Math.round((value + Number.EPSILON) * 10 ** digits) / 10 ** digits;
   const pct = (value) => `${round(value * 100, 2)}%`;
   const fmt = (value) => round(value, 4).toLocaleString("zh-CN");
+
+  function setHint(text) {
+    const hint = $("price-hint");
+    if (hint) hint.textContent = text;
+  }
 
   function findCurrency(token) {
     const text = String(token).trim().toLowerCase();
@@ -126,6 +143,211 @@
     return updates;
   }
 
+  function parsePoe2dbPrices(html) {
+    const rows = [];
+    const rowMatches = String(html).match(/<tr>[\s\S]*?<\/tr>/g) || [];
+    rowMatches.forEach((row) => {
+      const nameMatch = row.match(/<a href="Economy_[^"]+"><img[^>]+\/>([^<]+)<\/a>/);
+      const priceMatch = row.match(/<td>\s*([\d.,]+)\s*<a href="Economy_([^"]+)">[\s\S]*?<\/a>\s*<i[^>]*><\/i>\s*([\d.,]+)\s*<a href="Economy_([^"]+)">/);
+      if (!nameMatch || !priceMatch) return;
+      rows.push({
+        name: nameMatch[1].trim(),
+        baseAmount: Number(priceMatch[1].replace(/,/g, "")),
+        base: priceMatch[2],
+        targetAmount: Number(priceMatch[3].replace(/,/g, "")),
+        target: priceMatch[4]
+      });
+    });
+
+    const raw = new Map(rows.map((row) => [row.target, row]));
+    const divineRow = raw.get("divine");
+    if (!divineRow) return [];
+
+    const chaos = { chaos: 1, divine: divineRow.baseAmount / divineRow.targetAmount };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      Object.entries(slugToId).forEach(([slug, id]) => {
+        if (chaos[id] || !raw.has(slug)) return;
+        const row = raw.get(slug);
+        const baseId = slugToId[row.base];
+        if (baseId && chaos[baseId]) {
+          chaos[id] = chaos[baseId] * row.baseAmount / row.targetAmount;
+          changed = true;
+        }
+      });
+    }
+
+    return Object.entries(chaos)
+      .map(([id, value]) => ({ id, chaos: round(value, 6) }))
+      .filter((item) => state.prices.some((price) => price.id === item.id));
+  }
+
+  function applyPriceUpdates(updates, source) {
+    updates.forEach((update) => {
+      const item = state.prices.find((price) => price.id === update.id);
+      if (item && update.chaos > 0) item.chaos = update.chaos;
+    });
+    state.source = source;
+    renderPriceList();
+    renderCurrencyOptions();
+    renderOpportunities();
+  }
+
+  async function fetchText(url, authText = "") {
+    const headers = parseAuthHeaders(authText);
+    const directOptions = { cache: "no-store", headers };
+    const direct = await fetch(url, directOptions);
+    if (!direct.ok) throw new Error(`请求失败：${direct.status}`);
+    return direct.text();
+  }
+
+  async function fetchPublicText(url) {
+    try {
+      return await fetchText(url);
+    } catch (directError) {
+      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+      const response = await fetch(proxy, { cache: "no-store" });
+      if (!response.ok) throw directError;
+      return response.text();
+    }
+  }
+
+  async function refreshPoe2dbPrices() {
+    const button = $("refresh-prices");
+    button.disabled = true;
+    button.textContent = "刷新中...";
+    setHint("正在从 poe2db 获取最新物价...");
+    try {
+      const html = await fetchPublicText("https://poe2db.tw/cn/Economy");
+      const updates = parsePoe2dbPrices(html);
+      if (updates.length < 5) throw new Error("没有解析到足够的通货价格");
+      applyPriceUpdates(updates, "poe2db 现刷");
+      const time = new Date().toLocaleString("zh-CN");
+      setHint(`已刷新 poe2db 物价（${time}）。如果价格看起来异常，请打开 poe2db 对照确认。`);
+    } catch (error) {
+      setHint(`刷新物价失败：${error.message}。多数情况是浏览器跨站限制，可以打开 poe2db 后复制行情到这里导入。`);
+    } finally {
+      button.disabled = false;
+      button.textContent = "刷新物价";
+    }
+  }
+
+  function parseAuthHeaders(text) {
+    const headers = {};
+    String(text).split(/\n+/).forEach((line) => {
+      const match = line.match(/^([^:]+):\s*(.+)$/);
+      if (!match) return;
+      const key = match[1].trim();
+      const value = match[2].trim();
+      if (/^cookie$/i.test(key)) return;
+      if (/^(authorization|x-|accept|content-type)/i.test(key)) headers[key] = value;
+    });
+    return headers;
+  }
+
+  function extractPrices(text, patternText) {
+    let pattern;
+    try {
+      pattern = new RegExp(patternText, "gi");
+    } catch (_) {
+      pattern = /(?:price|价格|售价|amount)[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)/gi;
+    }
+    const prices = [];
+    let match;
+    while ((match = pattern.exec(text)) && prices.length < 200) {
+      const raw = match[1] || match[0];
+      const value = Number(String(raw).replace(/,/g, ""));
+      if (Number.isFinite(value)) prices.push(value);
+    }
+    return prices.sort((a, b) => a - b);
+  }
+
+  function setWatchStatus(text, mood = "") {
+    const box = $("watch-status");
+    box.className = `watch-status ${mood}`.trim();
+    box.textContent = text;
+  }
+
+  function addWatchLog(text) {
+    const item = document.createElement("div");
+    item.textContent = `${new Date().toLocaleTimeString("zh-CN")} ${text}`;
+    $("watch-log").prepend(item);
+    while ($("watch-log").children.length > 8) $("watch-log").lastElementChild.remove();
+  }
+
+  async function notifyBargain(message) {
+    if ("Notification" in window) {
+      if (Notification.permission === "default") await Notification.requestPermission();
+      if (Notification.permission === "granted") new Notification("POE2 淘宝模式提醒", { body: message });
+    }
+  }
+
+  async function checkMarketOnce() {
+    const url = $("market-url").value.trim();
+    const target = number($("target-price").value);
+    const pattern = $("price-pattern").value.trim();
+    const auth = $("auth-token").value;
+    if (!url || target <= 0) {
+      setWatchStatus("请先填写集市地址和目标价格。", "alert");
+      return;
+    }
+    if (/^\s*cookie\s*:/im.test(auth)) {
+      addWatchLog("检测到 Cookie：浏览器页面不能可靠手动发送 Cookie，建议使用 Authorization token 或后端代理。");
+    }
+
+    try {
+      setWatchStatus("正在检查集市价格...", "");
+      const text = auth.trim() ? await fetchText(url, auth) : await fetchPublicText(url);
+      const prices = extractPrices(text, pattern);
+      if (!prices.length) {
+        setWatchStatus("已检查，但没有识别到价格。请调整价格识别规则。", "alert");
+        addWatchLog("没有识别到价格。");
+        return;
+      }
+      const best = prices[0];
+      if (best <= target) {
+        const message = `发现低价：${best}，目标价：${target}`;
+        setWatchStatus(message, "alert");
+        addWatchLog(message);
+        const alertKey = `${url}:${best}:${target}`;
+        if (alertKey !== state.lastAlertKey) {
+          state.lastAlertKey = alertKey;
+          await notifyBargain(message);
+        }
+      } else {
+        const message = `已检查，当前最低识别价 ${best}，高于目标价 ${target}。`;
+        setWatchStatus(message, "good");
+        addWatchLog(message);
+      }
+    } catch (error) {
+      setWatchStatus(`检查失败：${error.message}。如果目标站点限制跨站读取，需要后端代理或手动查看。`, "alert");
+      addWatchLog(`检查失败：${error.message}`);
+    }
+  }
+
+  function toggleWatch() {
+    const button = $("toggle-watch");
+    if (state.watchActive) {
+      clearInterval(state.watchTimer);
+      state.watchTimer = null;
+      state.watchActive = false;
+      button.classList.remove("active");
+      button.textContent = "开启淘宝模式";
+      setWatchStatus("淘宝模式已关闭。", "");
+      return;
+    }
+
+    const intervalSeconds = Math.max(60, number($("watch-interval").value, 180));
+    $("watch-interval").value = intervalSeconds;
+    state.watchActive = true;
+    button.classList.add("active");
+    button.textContent = "关闭淘宝模式";
+    setWatchStatus(`淘宝模式已开启，每 ${intervalSeconds} 秒检查一次。`, "good");
+    checkMarketOnce();
+    state.watchTimer = setInterval(checkMarketOnce, intervalSeconds * 1000);
+  }
+
   function nameOf(id) {
     return state.prices.find((item) => item.id === id)?.name || id;
   }
@@ -185,6 +407,8 @@
       renderOpportunities();
     });
 
+    $("refresh-prices").addEventListener("click", refreshPoe2dbPrices);
+    $("toggle-watch").addEventListener("click", toggleWatch);
     $("apply-quotes").addEventListener("click", () => {
       state.quotes = parseQuotes($("quote-input").value);
       state.source = state.quotes.length ? "手动报价" : "价格推算";
@@ -193,14 +417,7 @@
 
     $("import-prices").addEventListener("click", () => {
       const updates = parsePriceImport($("price-import").value);
-      updates.forEach((update) => {
-        const item = state.prices.find((price) => price.id === update.id);
-        if (item) item.chaos = update.chaos;
-      });
-      state.source = updates.length ? "poe2db 导入" : state.source;
-      renderPriceList();
-      renderCurrencyOptions();
-      renderOpportunities();
+      if (updates.length) applyPriceUpdates(updates, "poe2db 导入");
     });
 
     $("reset-sample").addEventListener("click", () => {
@@ -212,6 +429,7 @@
       renderPriceList();
       renderCurrencyOptions();
       renderOpportunities();
+      setHint("已恢复示例行情；需要最新数据时点“刷新物价”。");
     });
 
     document.querySelectorAll(".tab").forEach((button) => {
@@ -232,7 +450,7 @@
     renderOpportunities();
   }
 
-  const api = { parseQuotes, parsePriceImport, scanArbitrage, generatedQuotes, bestRateMap, state };
+  const api = { parseQuotes, parsePriceImport, parsePoe2dbPrices, scanArbitrage, generatedQuotes, bestRateMap, state };
   if (typeof window !== "undefined") {
     window.Poe2Arb = api;
     document.addEventListener("DOMContentLoaded", init);
