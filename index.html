@@ -56,13 +56,49 @@
             </div>
             <a class="source-link" href="https://poe2db.tw/cn/Economy" target="_blank" rel="noreferrer">打开 poe2db</a>
           </div>
-          <p class="hint">页面会优先套用仓库中的 poe2db 快照；你也可以把 poe2db Economy 页面中复制到的通货行粘贴进来。</p>
+          <p class="hint" id="price-hint">页面会先套用仓库快照；需要最新数据时点“刷新物价”。如果浏览器拦截，再把 poe2db 行情复制到下面导入。</p>
           <textarea id="price-import" rows="5" placeholder="示例：神圣石 9.03&#10;崇高石 0.0254&#10;混沌石 1"></textarea>
           <div class="button-row">
-            <button id="import-prices" type="button">导入价格</button>
+            <button id="refresh-prices" type="button">刷新物价</button>
+            <button id="import-prices" type="button" class="ghost">导入价格</button>
             <button id="reset-sample" type="button" class="ghost">恢复示例</button>
           </div>
         </div>
+      </section>
+
+      <section class="panel watch-panel" aria-label="淘宝模式">
+        <div class="watch-head">
+          <div>
+            <p class="eyebrow">Bargain Watch</p>
+            <h2>淘宝模式</h2>
+          </div>
+          <button id="toggle-watch" type="button" class="watch-toggle">开启淘宝模式</button>
+        </div>
+        <p class="hint">默认关闭。开启后会按你设置的慢频率刷新集市页面；发现低于目标价格的内容时，页面会提示并尝试发送浏览器通知。</p>
+        <div class="watch-grid">
+          <label class="field wide-field">
+            <span>网页集市地址</span>
+            <input id="market-url" type="url" placeholder="粘贴你要监控的集市页面地址" />
+          </label>
+          <label class="field">
+            <span>目标价格</span>
+            <input id="target-price" type="number" min="0" step="0.01" value="0" inputmode="decimal" />
+          </label>
+          <label class="field">
+            <span>刷新间隔（秒）</span>
+            <input id="watch-interval" type="number" min="60" step="30" value="180" inputmode="numeric" />
+          </label>
+          <label class="field wide-field">
+            <span>价格识别规则</span>
+            <input id="price-pattern" value="(?:price|价格|售价|amount)[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)" />
+          </label>
+          <label class="field wide-field">
+            <span>Token / Cookie（可选）</span>
+            <textarea id="auth-token" rows="3" placeholder="例如：Authorization: Bearer xxxxxx&#10;或：Cookie: session=xxxxxx"></textarea>
+          </label>
+        </div>
+        <div class="watch-status" id="watch-status">淘宝模式未开启。</div>
+        <div class="watch-log" id="watch-log"></div>
       </section>
 
       <section class="main-grid">
