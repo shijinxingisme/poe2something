@@ -1,8 +1,8 @@
 (function () {
   const samplePrices = [
-    { id: "chaos", name: "混沌石", aliases: ["Chaos", "Chaos Orb", "混沌"], chaos: 1 },
-    { id: "exalted", name: "崇高石", aliases: ["Exalted", "Exalted Orb", "崇高"], chaos: 20 },
-    { id: "divine", name: "神圣石", aliases: ["Divine", "Divine Orb", "神圣"], chaos: 112 },
+    { id: "chaos", name: "混沌石", aliases: ["Chaos", "Chaos Orb", "混沌", "C"], chaos: 1 },
+    { id: "exalted", name: "崇高石", aliases: ["Exalted", "Exalted Orb", "崇高", "Exalt", "Ex", "E"], chaos: 20 },
+    { id: "divine", name: "神圣石", aliases: ["Divine", "Divine Orb", "神圣", "Div", "D"], chaos: 112 },
     { id: "regal", name: "富豪石", aliases: ["Regal", "Regal Orb", "富豪"], chaos: 3.4 },
     { id: "vaal", name: "瓦尔宝珠", aliases: ["Vaal", "Vaal Orb", "瓦尔"], chaos: 1.8 },
     { id: "alchemy", name: "点金石", aliases: ["Alchemy", "Orb of Alchemy", "点金"], chaos: 0.72 },
@@ -65,6 +65,24 @@
       item.name.toLowerCase() === text ||
       item.aliases.some((alias) => alias.toLowerCase() === text)
     );
+  }
+
+  function currencyChaosValue(id) {
+    return state.prices.find((item) => item.id === id)?.chaos || 0;
+  }
+
+  function toChaos(amount, currencyId) {
+    return amount * currencyChaosValue(currencyId);
+  }
+
+  function parseCurrencyUnit(unitText, fallbackId) {
+    const text = String(unitText || "").trim().toLowerCase();
+    if (!text) return fallbackId;
+    if (["d", "div", "divine", "神圣", "神圣石"].includes(text)) return "divine";
+    if (["e", "ex", "exalt", "exalted", "崇高", "崇高石"].includes(text)) return "exalted";
+    if (["c", "chaos", "混沌", "混沌石"].includes(text)) return "chaos";
+    const found = findCurrency(text);
+    return found ? found.id : fallbackId;
   }
 
   function parseQuotes(text) {
@@ -191,6 +209,7 @@
     state.source = source;
     renderPriceList();
     renderCurrencyOptions();
+    renderWatchCurrencyOptions();
     renderOpportunities();
   }
 
@@ -246,21 +265,23 @@
     return headers;
   }
 
-  function extractPrices(text, patternText) {
+  function extractPrices(text, patternText, defaultUnitId) {
     let pattern;
     try {
       pattern = new RegExp(patternText, "gi");
     } catch (_) {
-      pattern = /(?:price|价格|售价|amount)[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)/gi;
+      pattern = /([0-9]+(?:\.[0-9]+)?)\s*(D|Div|Divine|神圣|E|Ex|Exalt|崇高|C|Chaos|混沌)?/gi;
     }
     const prices = [];
     let match;
     while ((match = pattern.exec(text)) && prices.length < 200) {
-      const raw = match[1] || match[0];
-      const value = Number(String(raw).replace(/,/g, ""));
-      if (Number.isFinite(value)) prices.push(value);
+      const value = Number(String(match[1] || match[0]).replace(/,/g, ""));
+      if (!Number.isFinite(value)) continue;
+      const currencyId = parseCurrencyUnit(match[2], defaultUnitId);
+      const chaosValue = toChaos(value, currencyId);
+      if (chaosValue > 0) prices.push({ amount: value, currencyId, chaosValue });
     }
-    return prices.sort((a, b) => a - b);
+    return prices.sort((a, b) => a.chaosValue - b.chaosValue);
   }
 
   function setWatchStatus(text, mood = "") {
@@ -283,13 +304,20 @@
     }
   }
 
+  function describePrice(price) {
+    return `${fmt(price.amount)} ${nameOf(price.currencyId)}（约 ${fmt(price.chaosValue)} 混沌石）`;
+  }
+
   async function checkMarketOnce() {
     const url = $("market-url").value.trim();
-    const target = number($("target-price").value);
+    const targetAmount = number($("target-price").value);
+    const targetUnit = $("target-unit").value || "divine";
+    const defaultDetectedUnit = $("detected-unit").value || targetUnit;
+    const targetChaos = toChaos(targetAmount, targetUnit);
     const pattern = $("price-pattern").value.trim();
     const auth = $("auth-token").value;
-    if (!url || target <= 0) {
-      setWatchStatus("请先填写集市地址和目标价格。", "alert");
+    if (!url || targetAmount <= 0 || targetChaos <= 0) {
+      setWatchStatus("请先填写集市地址、目标价格和单位。", "alert");
       return;
     }
     if (/^\s*cookie\s*:/im.test(auth)) {
@@ -299,24 +327,25 @@
     try {
       setWatchStatus("正在检查集市价格...", "");
       const text = auth.trim() ? await fetchText(url, auth) : await fetchPublicText(url);
-      const prices = extractPrices(text, pattern);
+      const prices = extractPrices(text, pattern, defaultDetectedUnit);
       if (!prices.length) {
         setWatchStatus("已检查，但没有识别到价格。请调整价格识别规则。", "alert");
         addWatchLog("没有识别到价格。");
         return;
       }
       const best = prices[0];
-      if (best <= target) {
-        const message = `发现低价：${best}，目标价：${target}`;
+      const targetText = `${fmt(targetAmount)} ${nameOf(targetUnit)}（约 ${fmt(targetChaos)} 混沌石）`;
+      if (best.chaosValue <= targetChaos) {
+        const message = `发现低价：${describePrice(best)}，低于目标 ${targetText}`;
         setWatchStatus(message, "alert");
         addWatchLog(message);
-        const alertKey = `${url}:${best}:${target}`;
+        const alertKey = `${url}:${best.chaosValue}:${targetChaos}`;
         if (alertKey !== state.lastAlertKey) {
           state.lastAlertKey = alertKey;
           await notifyBargain(message);
         }
       } else {
-        const message = `已检查，当前最低识别价 ${best}，高于目标价 ${target}。`;
+        const message = `已检查，最低识别价 ${describePrice(best)}，高于目标 ${targetText}。`;
         setWatchStatus(message, "good");
         addWatchLog(message);
       }
@@ -356,6 +385,16 @@
     const selected = $("start-currency").value || "chaos";
     $("start-currency").innerHTML = state.prices.map((item) => `<option value="${item.id}">${item.name}</option>`).join("");
     $("start-currency").value = state.prices.some((item) => item.id === selected) ? selected : "chaos";
+  }
+
+  function renderWatchCurrencyOptions() {
+    ["target-unit", "detected-unit"].forEach((id) => {
+      const element = $(id);
+      if (!element) return;
+      const selected = element.value || (id === "target-unit" ? "divine" : "exalted");
+      element.innerHTML = state.prices.map((item) => `<option value="${item.id}">${item.name}</option>`).join("");
+      element.value = state.prices.some((item) => item.id === selected) ? selected : "chaos";
+    });
   }
 
   function renderPriceList() {
@@ -428,6 +467,7 @@
       $("price-import").value = "";
       renderPriceList();
       renderCurrencyOptions();
+      renderWatchCurrencyOptions();
       renderOpportunities();
       setHint("已恢复示例行情；需要最新数据时点“刷新物价”。");
     });
@@ -445,12 +485,13 @@
     state.quotes = parseQuotes(sampleQuoteText);
     $("quote-input").value = sampleQuoteText;
     renderCurrencyOptions();
+    renderWatchCurrencyOptions();
     renderPriceList();
     bindEvents();
     renderOpportunities();
   }
 
-  const api = { parseQuotes, parsePriceImport, parsePoe2dbPrices, scanArbitrage, generatedQuotes, bestRateMap, state };
+  const api = { parseQuotes, parsePriceImport, parsePoe2dbPrices, extractPrices, toChaos, parseCurrencyUnit, scanArbitrage, generatedQuotes, bestRateMap, state };
   if (typeof window !== "undefined") {
     window.Poe2Arb = api;
     document.addEventListener("DOMContentLoaded", init);
