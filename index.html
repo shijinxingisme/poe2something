@@ -56,8 +56,8 @@
             </div>
             <a class="source-link" href="https://poe2db.tw/cn/Economy" target="_blank" rel="noreferrer">打开 poe2db</a>
           </div>
-          <p class="hint">MVP 支持把 poe2db Economy 页面中复制到的通货行粘贴进来；也可以直接编辑下方价格。</p>
-          <textarea id="price-import" rows="5" placeholder="示例：神圣石 112&#10;崇高石 20&#10;混沌石 1"></textarea>
+          <p class="hint">页面会优先套用仓库中的 poe2db 快照；你也可以把 poe2db Economy 页面中复制到的通货行粘贴进来。</p>
+          <textarea id="price-import" rows="5" placeholder="示例：神圣石 9.03&#10;崇高石 0.0254&#10;混沌石 1"></textarea>
           <div class="button-row">
             <button id="import-prices" type="button">导入价格</button>
             <button id="reset-sample" type="button" class="ghost">恢复示例</button>
@@ -98,5 +98,6 @@
     </main>
 
     <script src="app.js"></script>
+    <script src="poe2db-prices.js"></script>
   </body>
 </html>
