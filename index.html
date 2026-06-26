@@ -3,93 +3,96 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>POE2 国服通货兑换建议器</title>
-    <meta name="description" content="输入 POE2 国服通货比例，比较崇高石和混沌石兑换神圣石的成本。" />
+    <title>POE2 市场套利分析器</title>
+    <meta name="description" content="基于 POE2 通货价格和实际报价，扫描 A→B→C→A 路径套利机会并排序。" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="app-shell">
-      <section class="intro" aria-labelledby="page-title">
+      <section class="hero" aria-labelledby="page-title">
         <div>
-          <p class="eyebrow">POE2 Currency Advisor</p>
-          <h1 id="page-title">国服通货兑换建议器</h1>
-          <p class="lede">输入当前市场比例，快速判断兑换神圣石时用崇高石更划算，还是直接用混沌石更划算。</p>
+          <p class="eyebrow">POE2 Market Arbitrage</p>
+          <h1 id="page-title">通货三角套利雷达</h1>
+          <p class="lede">输入行情价格和实际交易报价，扫描 A→B→C→A 闭环路径，找出收益率最高的 Top N 套利机会。</p>
         </div>
-        <div class="market-strip" aria-label="计算关注点">
-          <span>神圣石</span>
-          <span>崇高石</span>
-          <span>混沌石</span>
+        <div class="hero-metrics" aria-label="当前扫描摘要">
+          <article><span>可用报价</span><strong id="quote-count">0</strong></article>
+          <article><span>套利机会</span><strong id="deal-count">0</strong></article>
+          <article><span>最高收益</span><strong id="best-gain">0%</strong></article>
         </div>
       </section>
 
-      <section class="workspace" aria-label="兑换计算器">
-        <form class="panel input-panel" id="advisor-form">
-          <div class="panel-heading">
-            <p class="eyebrow">输入比例</p>
-            <h2>今天的市场价</h2>
+      <section class="control-grid" aria-label="套利参数">
+        <div class="panel settings-panel">
+          <div class="panel-title">
+            <p class="eyebrow">扫描设置</p>
+            <h2>从哪种通货开始</h2>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>起点通货 A</span>
+              <select id="start-currency"></select>
+            </label>
+            <label class="field">
+              <span>投入数量</span>
+              <input id="start-amount" type="number" min="0.01" step="0.01" value="100" inputmode="decimal" />
+            </label>
+            <label class="field">
+              <span>展示 Top N</span>
+              <input id="top-n" type="number" min="1" max="20" step="1" value="6" inputmode="numeric" />
+            </label>
+            <label class="field">
+              <span>最低收益率</span>
+              <input id="min-profit" type="number" min="0" step="0.1" value="0.5" inputmode="decimal" />
+            </label>
+          </div>
+        </div>
+
+        <div class="panel import-panel">
+          <div class="panel-title compact-title">
+            <div>
+              <p class="eyebrow">行情来源</p>
+              <h2>poe2db 价格表</h2>
+            </div>
+            <a class="source-link" href="https://poe2db.tw/cn/Economy" target="_blank" rel="noreferrer">打开 poe2db</a>
+          </div>
+          <p class="hint">MVP 支持把 poe2db Economy 页面中复制到的通货行粘贴进来；也可以直接编辑下方价格。</p>
+          <textarea id="price-import" rows="5" placeholder="示例：神圣石 112&#10;崇高石 20&#10;混沌石 1"></textarea>
+          <div class="button-row">
+            <button id="import-prices" type="button">导入价格</button>
+            <button id="reset-sample" type="button" class="ghost">恢复示例</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="main-grid">
+        <section class="panel data-panel" aria-label="价格和报价">
+          <div class="tabs" role="tablist" aria-label="数据输入">
+            <button class="tab active" type="button" data-tab="prices">通货价格</button>
+            <button class="tab" type="button" data-tab="quotes">交易报价</button>
           </div>
 
-          <label class="field">
-            <span>需要兑换的神圣石数量</span>
-            <input id="target-divines" type="number" min="0.01" step="0.01" value="1" inputmode="decimal" />
-          </label>
+          <div class="tab-page active" id="prices-page">
+            <div class="table-head"><span>通货</span><span>折算混沌石</span></div>
+            <div id="price-list" class="price-list"></div>
+          </div>
 
-          <label class="field">
-            <span>1 神圣石 = 多少混沌石</span>
-            <input id="divine-chaos" type="number" min="0.01" step="0.01" value="110" inputmode="decimal" />
-          </label>
-
-          <label class="field">
-            <span>1 神圣石 = 多少崇高石</span>
-            <input id="divine-exalt" type="number" min="0.01" step="0.01" value="5" inputmode="decimal" />
-          </label>
-
-          <label class="field">
-            <span>1 崇高石 = 多少混沌石</span>
-            <input id="exalt-chaos" type="number" min="0.01" step="0.01" value="20" inputmode="decimal" />
-          </label>
-
-          <details class="advanced">
-            <summary>加入我手上的通货</summary>
-            <label class="field">
-              <span>已有混沌石</span>
-              <input id="owned-chaos" type="number" min="0" step="1" value="0" inputmode="decimal" />
-            </label>
-            <label class="field">
-              <span>已有崇高石</span>
-              <input id="owned-exalt" type="number" min="0" step="1" value="0" inputmode="decimal" />
-            </label>
-          </details>
-        </form>
+          <div class="tab-page" id="quotes-page">
+            <p class="hint">每行一个报价：A&gt;B=数量，意思是 1 个 A 可以换到多少 B。</p>
+            <textarea id="quote-input" rows="14"></textarea>
+            <div class="button-row"><button id="apply-quotes" type="button">应用报价</button></div>
+          </div>
+        </section>
 
         <section class="panel result-panel" aria-live="polite">
-          <div class="result-topline">
-            <p class="eyebrow">推荐方案</p>
-            <span class="confidence" id="confidence-label">计算中</span>
+          <div class="result-head">
+            <div>
+              <p class="eyebrow">Top N Opportunities</p>
+              <h2>套利路径排序</h2>
+            </div>
+            <span id="market-status" class="status-pill">示例行情</span>
           </div>
-          <h2 id="recommendation">等待输入</h2>
-          <p class="reason" id="reason">请填写通货比例。</p>
-
-          <div class="cost-board">
-            <article>
-              <span>混沌石路线</span>
-              <strong id="chaos-cost">-</strong>
-              <small>折算混沌石成本</small>
-            </article>
-            <article>
-              <span>崇高石路线</span>
-              <strong id="exalt-cost">-</strong>
-              <small>折算混沌石成本</small>
-            </article>
-            <article>
-              <span>预计节省</span>
-              <strong id="saving">-</strong>
-              <small>越高越值得换路线</small>
-            </article>
-          </div>
-
-          <div class="steps" id="steps"></div>
-          <div class="break-even" id="break-even"></div>
+          <div id="opportunity-list" class="opportunity-list"></div>
         </section>
       </section>
     </main>
